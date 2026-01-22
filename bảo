@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mini Tower Defense</title>
+    <style>
+        canvas { border: 2px solid #333; background: #e0e0e0; display: block; margin: 20px auto; }
+        body { text-align: center; font-family: sans-serif; }
+    </style>
+</head>
+<body>
+    <h1>Tower Defense</h1>
+    <canvas id="gameCanvas" width="600" height="400"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let gold = 100;
+        let enemies = [];
+        let towers = [];
+        let projectiles = [];
+        let frame = 0;
+
+        class Enemy {
+            constructor() {
+                this.x = 0;
+                this.y = 200;
+                this.speed = 1.5;
+                this.health = 50;
+            }
+            draw() {
+                ctx.fillStyle = 'red';
+                ctx.fillRect(this.x, this.y - 10, 20, 20);
+            }
+            update() {
+                this.x += this.speed;
+            }
+        }
+
+        class Tower {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.range = 100;
+                this.cooldown = 0;
+            }
+            draw() {
+                ctx.fillStyle = 'blue';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 15, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            fire() {
+                if (this.cooldown <= 0) {
+                    const target = enemies.find(e => Math.hypot(e.x - this.x, e.y - this.y) < this.range);
+                    if (target) {
+                        projectiles.push(new Projectile(this.x, this.y, target));
+                        this.cooldown = 30;
+                    }
+                } else {
+                    this.cooldown--;
+                }
+            }
+        }
+
+        class Projectile {
+            constructor(x, y, target) {
+                this.x = x; this.y = y;
+                this.target = target;
+                this.speed = 5;
+            }
+            draw() {
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            update() {
+                const angle = Math.atan2(this.target.y - this.y, this.target.x - this.x);
+                this.x += Math.cos(angle) * this.speed;
+                this.y += Math.sin(angle) * this.speed;
+            }
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#bbb';
+            ctx.fillRect(0, 180, 600, 40);
+
+            if (frame % 60 === 0) enemies.push(new Enemy());
+            
+            enemies.forEach((e, i) => {
+                e.update(); e.draw();
+                if (e.x > 600) enemies.splice(i, 1);
+            });
+
+            towers.forEach(t => { t.draw(); t.fire(); });
+
+            projectiles.forEach((p, i) => {
+                p.update(); p.draw();
+                const dist = Math.hypot(p.x - p.target.x, p.y - p.target.y);
+                if (dist < 5) {
+                    p.target.health -= 10;
+                    projectiles.splice(i, 1);
+                    if (p.target.health <= 0) {
+                        const idx = enemies.indexOf(p.target);
+                        if (idx > -1) {
+                            enemies.splice(idx, 1);
+                            gold += 5;
+                        }
+                    }
+                }
+            });
+
+            ctx.fillStyle = 'black';
+            ctx.font = '16px Arial';
+            ctx.fillText(`Gold: ${gold}`, 20, 30);
+            
+            frame++;
+            requestAnimationFrame(gameLoop);
+        }
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            if (gold >= 20) {
+                towers.push(new Tower(x, y));
+                gold -= 20;
+            }
+        });
+
+        gameLoop();
+    </script>
+</body>
+</html>
