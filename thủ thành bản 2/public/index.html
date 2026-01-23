@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pro Tower Defense - No Popups</title>
+    <style>
+        body { display: flex; background: #0a0a0a; color: #fff; font-family: 'Segoe UI', sans-serif; margin: 0; overflow: hidden; }
+        #game-container { position: relative; display: flex; flex-direction: column; align-items: center; padding: 10px; }
+        
+        #sidebar { width: 250px; background: #1a1a1a; border-left: 2px solid #333; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        
+        canvas { border: 3px solid #444; background: #0d1a10; cursor: crosshair; }
+        
+        .stats-bar { display: flex; gap: 20px; background: #222; padding: 10px; width: 100%; justify-content: center; border-bottom: 2px solid #444; }
+        .btn-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        
+        .btn { padding: 10px; cursor: pointer; border: none; color: white; font-weight: bold; border-radius: 5px; flex: 1; transition: 0.2s; }
+        .btn-0 { background: #00d2ff; } .btn-1 { background: #ffcc00; color: #000; } .btn-2 { background: #e056fd; }
+        .selected { outline: 3px solid #fff; box-shadow: 0 0 10px #fff; }
+        
+        #upgrade-panel { background: #2c3e50; padding: 15px; border-radius: 8px; display: none; border: 1px solid #34495e; }
+        .up-btn { background: #2ecc71; width: 100%; margin-top: 10px; padding: 12px; }
+        .sell-btn { background: #e74c3c; width: 100%; margin-top: 5px; padding: 12px; }
+        .up-btn:disabled { background: #7f8c8d; cursor: not-allowed; }
+        
+        b { color: #ffcc00; }
+        .hint { font-size: 12px; color: #888; margin-top: auto; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div class="stats-bar">
+        <span>Vàng: <b id="gold">200</b></span>
+        <span>Thành: <b id="hp">100</b></span>
+        <span>Wave: <b id="wave">1.0</b></span>
+    </div>
+    
+    <div class="btn-group">
+        <button class="btn btn-0 selected" onclick="sel(0, this)">LASER (40v)</button>
+        <button class="btn btn-1" onclick="sel(1, this)">PHÁO (100v)</button>
+        <button class="btn btn-2" onclick="sel(2, this)">TESLA (70v)</button>
+    </div>
+    
+    <canvas id="td" width="1000" height="700"></canvas>
+</div>
+
+<div id="sidebar">
+    <h3>QUẢN LÝ THÁP</h3>
+    <div id="empty-hint">Chọn một tháp trên bản đồ để nâng cấp hoặc bán.</div>
+    
+    <div id="upgrade-panel">
+        <p>Loại: <b id="tower-type">-</b></p>
+        <p>Cấp độ: <b id="tower-lvl">1</b></p>
+        <p>Sát thương: <b id="tower-dmg">0</b></p>
+        <hr>
+        <button id="btn-upgrade" class="btn up-btn" onclick="upgradeTower()">NÂNG CẤP (<span id="up-cost">0</span>v)</button>
+        <button class="btn sell-btn" onclick="sellTower()">BÁN THÁP (<span id="sell-val">0</span>v)</button>
+    </div>
+
+    <div class="hint">
+        * Nhấn <b>SPACE</b> để ĐÓNG BĂNG (50v)<br>
+        * Boss xuất hiện mỗi khi Wave tăng 1.0
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('td');
+    const ctx = canvas.getContext('2d');
+    const sz = 50, rows = 14, cols = 20; 
+    let gold = 200, baseHp = 100, frame = 0, diff = 1.0, selT = 0, lastBoss = 1;
+    let freezeCD = 0, isFrozen = false, selectedTowerObj = null;
+    let grid = [], path = [], enemies = [], towers = [], bullets = [];
+
+    const TYPES = [
+        { name: 'LASER', cost: 40, range: 180, cd: 20, dmg: 22, color: '#00d2ff', shape: 'diamond' },
+        { name: 'PHÁO', cost: 100, range: 300, cd: 85, dmg: 180, color: '#ffcc00', shape: 'hexa' },
+        { name: 'TESLA', cost: 70, range: 150, cd: 7, dmg: 7, color: '#e056fd', shape: 'star' }
+    ];
+
+    function sel(i, el) { selT = i; document.querySelectorAll('.btn').forEach(b => b.classList.remove('selected')); el.classList.add('selected'); }
+
+    function init() {
+        for(let r=0; r<rows; r++) grid[r] = new Array(cols).fill(0);
+        let x = 0, y = Math.floor(rows/2);
+        while(x < cols) {
+            grid[y][x] = 1; path.push({x: x*sz + sz/2, y: y*sz + sz/2});
+            let r = Math.random();
+            if(r < 0.45 || x === 0) x++;
+            else if(r < 0.7 && y > 1 && grid[y-1][x] === 0) y--;
+            else if(y < rows-2 && grid[y+1][x] === 0) y++;
+            else x++;
+        }
+    }
+
+    class Enemy {
+        constructor(boss = false) {
+            this.p = 0; this.x = path[0].x; this.y = path[0].y; this.boss = boss;
+            this.m = (boss ? 3000 : 100) * diff; this.s = boss ? 0.6 : 1.8;
+            this.h = this.m;
+        }
+        update() {
+            if(isFrozen) return;
+            let t = path[this.p];
+            let d = Math.hypot(t.x-this.x, t.y-this.y);
+            if(d < 5) this.p++;
+            else {
+                let a = Math.atan2(t.y-this.y, t.x-this.x);
+                this.x += Math.cos(a)*this.s; this.y += Math.sin(a)*this.s;
+            }
+        }
+        draw() {
+            ctx.fillStyle = isFrozen ? '#81ecec' : (this.boss ? '#9b59b6' : '#ff3f34');
+            ctx.beginPath(); ctx.arc(this.x, this.y, this.boss?25:12, 0, 7); ctx.fill();
+            ctx.fillStyle = '#2ecc71'; ctx.fillRect(this.x-20, this.y-30, (this.h/this.m)*40, 5);
+        }
+    }
+
+    class Tower {
+        constructor(x, y, i) { 
+            this.gx = x; this.gy = y; this.x = x*sz+sz/2; this.y = y*sz+sz/2; 
+            this.lvl = 1; this.t = {...TYPES[i]}; this.c = 0; 
+        }
+        draw() {
+            if(selectedTowerObj === this) {
+                ctx.strokeStyle = "rgba(255,255,255,0.5)";
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.t.range, 0, 7); ctx.stroke();
+            }
+            ctx.fillStyle = this.t.color; ctx.save(); ctx.translate(this.x, this.y);
+            ctx.rotate(frame*0.02); ctx.fillRect(-15, -15, 30, 30); ctx.restore();
+            ctx.fillStyle = "white"; ctx.font = "12px Arial"; ctx.fillText("Lv"+this.lvl, this.x-10, this.y+40);
+        }
+        fire() {
+            if(this.c > 0) { this.c--; return; }
+            let e = enemies.find(e => Math.hypot(e.x-this.x, e.y-this.y) < this.t.range);
+            if(e) { bullets.push(new Bullet(this.x, this.y, e, this.t)); this.c = this.t.cd; }
+        }
+    }
+
+    class Bullet {
+        constructor(x, y, t, tp) { this.x = x; this.y = y; this.t = t; this.d = tp.dmg; this.c = tp.color; this.s = 18; }
+        update() {
+            let a = Math.atan2(this.t.y-this.y, this.t.x-this.x);
+            this.x += Math.cos(a)*this.s; this.y += Math.sin(a)*this.s;
+        }
+        draw() { ctx.fillStyle = this.c; ctx.beginPath(); ctx.arc(this.x, this.y, 4, 0, 7); ctx.fill(); }
+    }
+
+    function upgradeTower() {
+        if(!selectedTowerObj) return;
+        let cost = Math.floor(selectedTowerObj.t.cost * 1.5);
+        if(gold >= cost) {
+            gold -= cost;
+            selectedTowerObj.lvl++;
+            selectedTowerObj.t.dmg *= 1.6;
+            selectedTowerObj.t.range *= 1.1;
+            updatePanel();
+        }
+    }
+
+    function sellTower() {
+        if(!selectedTowerObj) return;
+        gold += Math.floor(selectedTowerObj.t.cost / 2);
+        grid[selectedTowerObj.gy][selectedTowerObj.gx] = 0;
+        towers = towers.filter(t => t !== selectedTowerObj);
+        selectedTowerObj = null;
+        updatePanel();
+    }
+
+    function updatePanel() {
+        const panel = document.getElementById('upgrade-panel');
+        const hint = document.getElementById('empty-hint');
+        if(selectedTowerObj) {
+            panel.style.display = 'block'; hint.style.display = 'none';
+            document.getElementById('tower-type').innerText = selectedTowerObj.t.name;
+            document.getElementById('tower-lvl').innerText = selectedTowerObj.lvl;
+            document.getElementById('tower-dmg').innerText = Math.floor(selectedTowerObj.t.dmg);
+            document.getElementById('up-cost').innerText = Math.floor(selectedTowerObj.t.cost * 1.5);
+            document.getElementById('sell-val').innerText = Math.floor(selectedTowerObj.t.cost / 2);
+            document.getElementById('btn-upgrade').disabled = gold < (selectedTowerObj.t.cost * 1.5);
+        } else {
+            panel.style.display = 'none'; hint.style.display = 'block';
+        }
+        document.getElementById('gold').innerText = Math.floor(gold);
+    }
+
+    function loop() {
+        if(baseHp <= 0) { ctx.fillStyle = "red"; ctx.font = "80px Arial"; ctx.fillText("THÀNH THẤT THỦ", 200, 400); return; }
+        ctx.clearRect(0,0,1000,700); diff += 0.0006;
+        document.getElementById('wave').innerText = diff.toFixed(1);
+
+        if(Math.floor(diff) > lastBoss) { enemies.push(new Enemy(true)); lastBoss = Math.floor(diff); }
+
+        for(let r=0; r<rows; r++) for(let c=0; c<cols; c++) {
+            ctx.fillStyle = (grid[r][c] === 1) ? '#2c3e50' : (grid[r][c] === 2 ? '#7f8c8d' : '#0d1a10');
+            ctx.fillRect(c*sz, r*sz, sz, sz);
+        }
+
+        if(frame++ % 40 === 0) enemies.push(new Enemy(false));
+        enemies.forEach((e, i) => {
+            e.update(); e.draw();
+            if(e.p >= path.length) { enemies.splice(i, 1); baseHp -= (e.boss?50:10); document.getElementById('hp').innerText = baseHp; }
+        });
+
+        towers.forEach(t => { t.draw(); t.fire(); });
+        bullets.forEach((b, i) => {
+            b.update(); b.draw();
+            if(Math.hypot(b.x-b.t.x, b.y-b.t.y) < 20) {
+                bullets.splice(i, 1); b.t.h -= b.d;
+                if(b.t.h <= 0) {
+                    let id = enemies.indexOf(b.t);
+                    if(id > -1) { gold += (b.t.boss?100:5); enemies.splice(id,1); updatePanel(); }
+                }
+            }
+        });
+        requestAnimationFrame(loop);
+    }
+
+    canvas.onclick = (e) => {
+        let r = canvas.getBoundingClientRect();
+        let cx = Math.floor((e.clientX - r.left)/sz), cy = Math.floor((e.clientY - r.top)/sz);
+        let et = towers.find(t => t.gx === cx && t.gy === cy);
+        if(et) {
+            selectedTowerObj = et;
+        } else {
+            let t = TYPES[selT];
+            if(gold >= t.cost && grid[cy][cx] === 0) {
+                towers.push(new Tower(cx, cy, selT)); gold -= t.cost; grid[cy][cx] = 2;
+            }
+            selectedTowerObj = null;
+        }
+        updatePanel();
+    };
+
+    window.onkeydown = (e) => {
+        if(e.code === 'Space' && gold >= 50) {
+            gold -= 50; isFrozen = true; setTimeout(() => isFrozen = false, 3000); updatePanel();
+        }
+    };
+
+    init(); loop();
+</script>
+</body>
+</html>
